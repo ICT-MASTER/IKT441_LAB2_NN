@@ -1,20 +1,25 @@
-import urllib.request
-import time
 import sys
 import time
 import urllib
-import tarfile
 import gzip
-import shutil
-from contextlib import closing
-import urllib.request
-import os.path
-import os
 import tarfile
 import io
 import os
 
-
+#import urllib.request
+try:
+    # Python 3
+    from urllib.request import urlopen
+    from urllib.parse import urlparse
+    from urllib.request import urlsplit
+    from urllib.request import urlretrieve
+    print("here")
+except ImportError:
+    #Python 2
+    from urlparse import urlparse
+    from urllib import urlopen
+    from urlparse import urlsplit
+    from urllib import urlretrieve
 
 ## http://stackoverflow.com/questions/3667865/python-tarfile-progress-output
 def get_file_progress_file_object_class(on_progress):
@@ -78,11 +83,11 @@ def download(url, path="./"):
 
 
     # Download the file from `url` and save it locally under `file_name`:
-    split = urllib.parse.urlsplit(url)
+    split = urlsplit(url)
     file_name = split.path.split("/")[-1]
     path = path + file_name
     if not os.path.isfile(path):
-        file_name, headers = urllib.request.urlretrieve(url, path, reporthook=reporthook)
+        file_name, headers = urlretrieve(url, path, reporthook=reporthook)
     print("\nDownload complete!")
     return path
 
