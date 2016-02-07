@@ -52,7 +52,7 @@ if not os.path.exists(CHECKPOINT_PATH):
 # Load input data
 def load_data():
     vocab = {}
-    words = codecs.open(RNN_TRAINING_FILE, 'rb', 'utf-8').read()
+    words = codecs.open(RNN_TRAINING_FILE, 'rb', 'utf-8', errors='ignore').read()
     words = list(words)
     dataset = np.ndarray((len(words),), dtype=np.int32)
     for i, word in enumerate(words):
@@ -105,13 +105,10 @@ else:
 print 'going to train {} iterations'.format(jump * RNN_EPOCHS)
 for i in xrange(jump * RNN_EPOCHS):
 
-    start = time.time()
     x_batch = np.array([train_data[(jump * j + i) % whole_len]
                         for j in xrange(RNN_BATCHSIZE)])
     y_batch = np.array([train_data[(jump * j + i + 1) % whole_len]
                         for j in xrange(RNN_BATCHSIZE)])
-    print(time.time() - start)
-
     if RNN_GPU >=0:
         x_batch = cuda.to_gpu(x_batch)
         y_batch = cuda.to_gpu(y_batch)
