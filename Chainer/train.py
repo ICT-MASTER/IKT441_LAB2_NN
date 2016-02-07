@@ -1,4 +1,3 @@
-#%%
 import time
 import math
 import sys
@@ -11,7 +10,6 @@ import numpy as np
 from chainer import cuda, Variable, FunctionSet, optimizers
 import chainer.functions as F
 from CharRNN import CharRNN, make_initial_state
-
 
 RNN_DATA_DIR = os.environ.get("RNN_DATA_DIR")
 RNN_TRAINING_FILE = os.environ.get("RNN_TRAINING_FILE")
@@ -29,15 +27,31 @@ RNN_EPOCHS = int(os.environ.get("RNN_EPOCHS"))
 RNN_GRAD_CLIP = int(os.environ.get("RNN_GRAD_CLIP"))
 RNN_INIT_FROM = str(os.environ.get("RNN_INIT_FROM"))
 
-CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
-print(CURRENT_PATH)
 
 
-# input data
+# Determine paths
+CURRENT_PATH = os.path.dirname(os.path.abspath(__file__)) # Chainer path
+MODEL_PATH = CURRENT_PATH + "/Models/" + os.path.splitext(os.path.basename(RNN_TRAINING_FILE))[0] + "/" # Model path
+CHECKPOINT_PATH = MODEL_PATH + "checkpoints/"
+VOCAB_PATH = MODEL_PATH + "vocabulary.bin"
 
+
+print("--- Path Summary ---")
+print("Chainer Path: " + CURRENT_PATH)
+print("Model Path: " + MODEL_PATH)
+print("Checkpoint Path: " + CHECKPOINT_PATH)
+print("--------------------")
+
+# Create directories
+if not os.path.exists(MODEL_PATH):
+    os.mkdir(MODEL_PATH)
+if not os.path.exists(CHECKPOINT_PATH):
+    os.mkdir(CHECKPOINT_PATH)
+
+
+# Load input data
 def load_data():
     vocab = {}
-    print ("Input Training file: {0}".format(RNN_TRAINING_FILE))
     words = codecs.open(RNN_TRAINING_FILE, 'rb', 'utf-8').read()
     words = list(words)
     dataset = np.ndarray((len(words),), dtype=np.int32)
@@ -50,14 +64,18 @@ def load_data():
     return dataset, words, vocab
 
 
-if not os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), RNN_CHECKPOINT_DIR)):
-    os.mkdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), RNN_CHECKPOINT_DIR))
+def do_checkpoint(model, epoch):
+    model_copy = copy.deepcopy(model).to_cpu()
+
+    pickle.dump(model_copy, open(CHECKPOINT_PATH + "CharRNN-Epoch-%s.model" % epoch, 'wb'))
+    pickle.dump(model_copy, open(MODEL_PATH + "CharRNN-Latest.model", 'wb'))
+
+
+
 
 
 train_data, words, vocab = load_data()
-
-print(CURRENT_PATH + "/Models/vocab.bin")
-pickle.dump(vocab, open(CURRENT_PATH + "/Models/vocab.bin", 'wb'))
+pickle.dump(vocab, open(VOCAB_PATH, 'wb'))
 
 if len(RNN_INIT_FROM) > 0:
     model = pickle.load(open(RNN_INIT_FROM, 'rb'))
@@ -86,10 +104,13 @@ else:
 
 print 'going to train {} iterations'.format(jump * RNN_EPOCHS)
 for i in xrange(jump * RNN_EPOCHS):
+
+    start = time.time()
     x_batch = np.array([train_data[(jump * j + i) % whole_len]
                         for j in xrange(RNN_BATCHSIZE)])
     y_batch = np.array([train_data[(jump * j + i + 1) % whole_len]
                         for j in xrange(RNN_BATCHSIZE)])
+    print(time.time() - start)
 
     if RNN_GPU >=0:
         x_batch = cuda.to_gpu(x_batch)
@@ -100,7 +121,7 @@ for i in xrange(jump * RNN_EPOCHS):
 
     if (i + 1) % RNN_SEQ_LENGTH == 0:  # Run truncated BPTT
         now = time.time()
-        print '{}/{}, train_loss = {}, time = {:.2f}'.format((i+1)/RNN_SEQ_LENGTH, jump, accum_loss.data / RNN_SEQ_LENGTH, now-cur_at)
+        print '{}/{}, train_loss = {}, time = {:.2f}'.format((i+1) / RNN_SEQ_LENGTH, jump, accum_loss.data / RNN_SEQ_LENGTH, now-cur_at)
         cur_at = now
 
         optimizer.zero_grads()
@@ -114,15 +135,15 @@ for i in xrange(jump * RNN_EPOCHS):
         optimizer.clip_grads(RNN_GRAD_CLIP)
         optimizer.update()
 
+    # Save model to disk for checkpoints
     if (i + 1) % 10000 == 0:
-        fn = "{0}/Models/CharRNN-Epoch-{1}.chainermodel".format(CURRENT_PATH, float(i)/jump)
-        latest = "{0}/Models/CharRNN-Latest.chainermodel".format(CURRENT_PATH, float(i)/jump)
-
-        pickle.dump(copy.deepcopy(model).to_cpu(), open(fn, 'wb'))
-        pickle.dump(copy.deepcopy(model).to_cpu(), open(latest, 'wb'))
+        do_checkpoint(model, float(i)/jump)
 
     if (i + 1) % jump == 0:
         epoch += 1
+
+        # Save model
+        do_checkpoint(model, epoch)
 
         if epoch >= RNN_LEARNING_RATE_DECAY_AFTER:
             optimizer.lr *= RNN_LEARNING_RATE_DECAY

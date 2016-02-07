@@ -1,7 +1,7 @@
 __author__ = 'Per-Arne'
 import os
 import ConfigParser
-
+CURRENT_PATH = os.path.dirname(os.path.abspath(__file__)) # Chainer path
 try:
     input = raw_input
 except NameError:
@@ -78,7 +78,8 @@ while True:
 
 
         # Select Training file
-        training_files_path = "./Training/"
+        training_files_path = CURRENT_PATH + "/../Training/"
+        print(training_files_path)
         selected_file_path = select_menu(training_files_path, "*.txt", "Training Files")
         print("Selected {0}..".format(selected_file_path))
 
@@ -121,8 +122,23 @@ while True:
         with open(config_ini_path, 'wb') as configfile:
             config.write(configfile)
 
-        os.environ["RNN_MODEL"] = config.get(section_name, "model")
-        os.environ["RNN_VOCABULARY"] = config.get(section_name, "vocabulary")
+
+        print("--- Select Model ---")
+        model_list = os.listdir(CURRENT_PATH + "/Models")
+        for idx, dir_name in enumerate(model_list):
+            dir_path = os.path.join(CURRENT_PATH + "/Models/", dir_name)
+            print("%s. %s" % (idx, dir_path))
+        print("--------------------")
+        selected_model = None
+        while selected_model == None:
+            try:
+                selected_model = os.path.join(CURRENT_PATH + "/Models/", model_list[int(input("Choose: "))])
+            except:
+                pass
+
+        os.environ["RNN_MODEL"] = selected_model
+        os.environ["RNN_MODEL_FILENAME"] = config.get(section_name, "model_file")
+        os.environ["RNN_VOCABULARY_FILENAME"] = config.get(section_name, "vocabulary_file")
         os.environ["RNN_SEED"] = config.get(section_name, "seed")
         os.environ["RNN_SAMPLE"] = config.get(section_name, "sample")
         os.environ["RNN_PRIMETEXT"] = config.get(section_name, "primetext")
