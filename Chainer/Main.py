@@ -103,6 +103,7 @@ if __name__ == '__main__':
             os.environ["RNN_EPOCHS"] =                      config.get(section_name, "epochs")
             os.environ["RNN_GRAD_CLIP"] =                   config.get(section_name, "grad_clip")
             os.environ["RNN_INIT_FROM"] =                   config.get(section_name, "init_from")
+            os.environ["RNN_TRAIN_MODE"] =                  config.get(section_name, "train_mode")
 
             import train
 
@@ -151,6 +152,7 @@ if __name__ == '__main__':
             os.environ["RNN_PRIMETEXT"] = config.get(section_name, "primetext")
             os.environ["RNN_LENGTH"] = config.get(section_name, "length")
             os.environ["RNN_GPU"] = config.get(section_name, "gpu")
+            os.environ["RNN_TRAIN_MODE"] =                  config.get(section_name, "train_mode")
 
             import sample
             sample.run()

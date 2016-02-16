@@ -1,0 +1,1596 @@
+%define SECTORS 16							; keep it under 18
+%define IMAGE_SIZE ((SECTORS + 1) * 512)	; SECTORS + 1 (~= 18) * 512 bytes
+
+bits 16		; 16 bit mode
+org 100h	; entry point "address"
+
+; entry point
+_start:
+	call main	; call main
+	jmp $		; loop forever
+
+; mixin sys and main
+%include 'sys/txt.asm'
+%include 'sys/tmr.asm'
+%include 'sys/rnd.asm'
+%include 'sys/snd.asm'
+%include 'sys/vga.asm'
+%include 'main.asm'
+
+times IMAGE_SIZE - ($ - $$) db 0	; pad to IMAGE_SIZE
+%define SECTORS 16							; keep it under 18
+%define IMAGE_SIZE ((SECTORS + 1) * 512)	; SECTORS + 1 (~= 18) * 512 bytes
+%define STACK_SIZE 256						; 4096 bytes in paragraphs
+
+bits 16										; 16 bit mode
+;org 0x7C00									; BIOS boot sector entry point
+
+start:
+	cli ; disable interrupts
+	
+	;
+	; Notes:
+	;  1 paragraph	= 16 bytes
+	; 32 paragraphs = 512 bytes
+	;
+	; Skip past our SECTORS
+	; Skip past our reserved video memory buffer (for double buffering)
+	; Skip past allocated STACK_SIZE
+	;
+	mov ax, (((SECTORS + 1) * 32) + 4000 + STACK_SIZE)
+	mov ss, ax
+	mov sp, STACK_SIZE * 16 ; 4096 in bytes
+
+	sti ; enable interrupts
+
+	mov ax, 07C0h			; point all segments to _start
+	mov ds, ax
+	mov es, ax
+	mov fs, ax
+	mov gs, ax
+
+	; dl contains the drive number
+
+	mov ax, 0				; reset disk function
+	int 13h					; call BIOS interrupt
+	jc disk_reset_error
+
+	; FIXME: if SECTORS + 1 > 18 (~= max sectors per track) 
+	; then we should try to do _multiple_ reads
+	; 
+	; Notes:
+	;
+	; 1 sector			= 512 bytes
+	; 1 cylinder/track	= 18 sectors
+	; 1 side			= 80 cylinders/tracks
+	; 1 disk (1'44 MB)	= 2 sides
+	; 
+	; 2 * 80 * 18 * 512 = 1474560 bytes = 1440 kilo bytes = 1.4 mega bytes
+	;
+	; We start _reading_ at SECTOR 2 because SECTOR 1 is where our stage 1
+	; _bootloader_ (this piece of code up until the dw 0xAA55 marker, if you
+	; take the time and scroll down below) is *loaded* automatically by BIOS 
+	; and therefore there is no need to read it again ...
+
+	push es				; save es
+
+	mov ax, 07E0h		; destination location (address of _start)
+	mov es, ax			; destination location
+	mov bx, 0			; index 0
+
+	mov ah, 2			; read sectors function
+	mov al, SECTORS		; number of sectors
+	mov ch, 0			; cylinder number
+	mov dh, 0			; head number
+	mov cl, 2			; starting sector number
+	int 13h				; call BIOS interrupt
+
+	jc disk_read_error
+
+	pop es				; restore es
+
+	mov si, boot_msg	; boot message
+	call _puts			; print
+
+	jmp 07E0h:0000h		; jump to _start (a.k.a stage 2)
+
+disk_reset_error:
+	mov si, disk_reset_error_msg
+	jmp fatal
+
+disk_read_error:
+	mov si, disk_read_error_msg
+
+fatal:
+	call _puts	; print message in [DS:SI]
+
+	mov ax, 0	; wait for a keypress
+	int 16h
+
+	mov ax, 0	; reboot
+	int 19h
+
+; ===========================================
+; PROTOTYPE	: void _puts(char *s)
+; INPUT		: offset/pointer to string in SI
+; RETURN	: n/a
+; ===========================================
+_puts:
+	lodsb		; move byte [DS:SI] into AL
+
+	cmp al, 0	; 0 == end of string ?
+	je .end
+
+	mov ah, 0Eh ; display character function
+	int 10h		; call BIOS interrupt
+
+	jmp _puts	; next character
+
+.end:
+	ret
+
+disk_reset_error_msg: db 'Could not reset disk', 0
+disk_read_error_msg: db 'Could not read disk', 0
+boot_msg: db 'Booting Floppy Bird ... ', 0
+
+times 510 - ($ - $$) db 0	; pad to 510 bytes
+dw 0xAA55					; pad 2 more bytes = 512 bytes = THE BOOT SECTOR
+
+; entry point
+_start:
+	call main				; call main
+	jmp $					; loop forever
+
+; mixin sys and main
+%include 'sys/txt.asm'
+%include 'sys/tmr.asm'
+%include 'sys/rnd.asm'
+%include 'sys/snd.asm'
+%include 'sys/vga.asm'
+%include 'main.asm'
+
+times IMAGE_SIZE - ($ - $$) db 0	; pad to IMAGE_SIZE
+draw_flats:
+	push ax
+	push cx
+
+	mov ax, 0
+
+.flats:
+	push flats
+	push 40			; w
+	push 50			; h
+	push 0			; sx
+	push 0			; sy
+	push 40			; sw
+	push 50			; sh
+	push ax			; dx
+	push 106		; dy
+	push 0			; trasnsparent color
+	push 0
+	call blit_fast
+
+	add ax, 40
+	cmp ax, 320
+	jl .flats
+
+	pop cx
+	pop ax
+	ret
+draw_background:
+	pusha
+
+	mov cx, VIDMEM		; pointer to screen buffer
+	mov es, cx			;
+	xor di, di			; index 0
+	
+	mov al, byte [backgroundcolor]
+	mov ah, al
+
+	mov cx, VIDMES / 4	; 64000 / 4
+	add cx, VIDMEW * 2	; 2 rows
+
+	rep stosw			; store AX (2 bytes) in [ES:DI]
+
+	popa
+	ret
+
+randomize_backgroundcolor:
+	call random
+	mov word [backgroundcolor], ax
+	ret
+
+backgroundcolor: dw 3
+draw_clouds:
+	push ax
+	push cx
+
+	mov ax, 0
+
+.clouds:
+	push clouds
+	push 40			; w
+	push 16			; h
+	push 0			; sx
+	push 0			; sy
+	push 40			; sw
+	push 16			; sh
+	push ax			; dx
+	push 90			; dy
+	push 3			; trasnsparent color
+	push 0
+	call blit_fast
+
+	add ax, 40
+	cmp ax, 320
+	jl .clouds
+
+	pop cx
+	pop ax
+	ret
+draw_bushes:
+	push ax
+	push cx
+
+	xor ax, ax
+
+.bush:
+	push clouds
+	push 40			; w
+	push 16			; h
+	push 0			; sx
+	push 0			; sy
+	push 40			; sw
+	push 16			; sh
+	push ax			; dx
+	push 140		; dy
+	push 3			; trasnsparent color
+	push 58			; tint color
+	call blit_fast
+
+	add ax, 40
+	cmp ax, 320
+	jl .bush
+
+	pop cx
+	pop ax
+	ret
+reset_bird:
+	mov word [bird_pos+0], 60
+	mov word [bird_pos+2], 60
+	ret
+
+center_bird:
+	mov word [bird_pos+0], 144
+	mov word [bird_pos+2], 60
+	ret
+
+update_bird:
+	mov ax, word [bird_pos + 2] ; sy
+	cmp ax, 0					; top
+	jle .collide				; reached sky?
+
+	add ax, word [bird_pos + 6] ; sh
+	cmp ax, 156					; bottom (ground)
+	jg .collide					; reached ground?
+
+	call kbhit
+
+	test al, al					; no key was ...
+	jz .fall					; pressed then just fall ...
+
+	call animate_bird			; animate bird
+
+.move:
+	sub word [bird_pos + 2], 6	; move 4 pixels up on the Y axis
+	clc
+	ret
+
+.fall:
+	add word [bird_pos + 2], 2  ; move 2 pixels down on the Y axis
+	clc
+	ret
+
+.collide:
+	stc
+	ret
+
+animate_bird:
+	add word [bird_frm], 32		; advance fly animation by one frame
+	cmp word [bird_frm], 64		; did we reach the last frame yet?
+	jle .end					; if not, then we can jump right away
+	
+	mov word [bird_frm], 0		; reset animation to the first frame
+.end:
+	ret
+
+draw_bird:
+	push bird
+	push 96						; pw
+	push 24						; ph
+	push word [bird_frm]		; sx
+	push 0						; sy
+	push word [bird_pos + 4]	; sw
+	push word [bird_pos + 6]	; sh
+	push word [bird_pos + 0]	; dx
+	push word [bird_pos + 2]	; dy
+	push 0						; transparent color
+	push word [bird_tint]		; tint
+	call blit_fast
+	ret
+
+randomize_birdcolor:
+	call random
+	add ax, ax
+	mov word [bird_tint], ax
+	ret
+
+bird_pos: dw 60, 60, 32, 24 ; x, y, w, h
+bird_frm: dw 0				; current animation frame (X in pixels)
+bird_tint: dw 0				; crazy tint :P
+; Uncompressed TGA with origin set to Top-Left and 256 color map
+%define TGA_HEADER_COLORMAP 18 + 1028 ; 18 bytes header + 1028 bytes 256 colormap
+
+bird:		incbin	"../data/bird.tga",		TGA_HEADER_COLORMAP, 96 * 24
+grass:		incbin	"../data/grass.tga",	TGA_HEADER_COLORMAP, 16 * 10
+pipe:		incbin	"../data/pipe.tga",		TGA_HEADER_COLORMAP, 64 * 4
+pipe_top:	incbin	"../data/pipe_top.tga", TGA_HEADER_COLORMAP, 68 * 8
+
+flats:		incbin	"../data/flats.tga",	TGA_HEADER_COLORMAP, 40 * 50
+clouds:		incbin	"../data/cloud.tga",	TGA_HEADER_COLORMAP, 40 * 16
+font:		incbin	"../data/font.tga",		TGA_HEADER_COLORMAP, 80 * 8
+draw_ground:
+	push dx
+	mov dx, 0
+
+	push 0			; x
+	push 156		; y
+	push 320		; w
+	push 2			; h
+	push 230		; grass color
+	call blit_rect
+
+	push 0			; x
+	push 158		; y
+	push 320		; w
+	push 2			; h
+	push 70			; grass color
+	call blit_rect
+
+.grass:
+	push grass
+	push 8			; w
+	push 4			; h
+	push 0			; sx
+	push 0			; sy
+	push 8			; sw
+	push 4			; sh
+	push dx			; dx
+	push 160		; dy
+	push 0			; trasnsparent color
+	push 0
+	call blit_fast
+
+	add dx, 8
+	cmp dx, 320
+	jl .grass
+
+	push 0			; x
+	push 164		; y
+	push 320		; w
+	push 2			; h
+	push 70			; grass color
+	call blit_rect
+
+	push 0			; x
+	push 166		; y
+	push 320		; w
+	push 2			; h
+	push 67			; ground color
+	call blit_rect
+
+	push 0			; x
+	push 168		; y
+	push 320		; w
+	push 32			; h
+	push 66			; ground color
+	call blit_rect
+
+	pop dx
+	ret
+%define PIPE_1 pipes + 0
+%define PIPE_2 pipes + 8
+%define PIPE_3 pipes + 16
+
+update_pipes:
+	sub word [PIPE_1], 2
+	sub word [PIPE_2], 2
+	sub word [PIPE_3], 2
+
+.n1:
+	cmp word [PIPE_1], -36
+	jg .n2
+
+	call random_pipe_position
+	add ax, word [PIPE_3]
+	mov word [PIPE_1], ax
+
+	call randomize_pipe_1
+	ret
+
+.n2:
+	cmp word [PIPE_2], -36
+	jg .n3
+
+	call random_pipe_position
+	add ax, word [PIPE_1]
+	mov word [PIPE_2], ax
+
+	call randomize_pipe_2
+	ret
+
+.n3:
+	cmp word [PIPE_3], -36
+	jg .end
+
+	call random_pipe_position
+	add ax, word [PIPE_2]
+	mov word [PIPE_3], ax
+
+	call randomize_pipe_3
+	ret
+
+.end:
+	ret
+
+collide_pipe:
+	push si
+
+	mov si, pipes
+	add si, [pipe_a]
+
+	cmp word [si], 92
+	jg .end
+
+	cmp word [si], 28
+	jl .score
+
+	mov ax, word [bird_pos + 2]
+	cmp ax, word [si + 2]
+	jl .hit
+
+	add ax, word [bird_pos + 6]
+	cmp ax, word [si + 4]
+	jg .hit
+
+.end:
+	pop si
+	clc
+	ret
+
+.hit:
+	pop si
+	stc
+	ret
+
+.score:
+	call add_score
+	
+	cmp word [pipe_a], 16
+	je .wrap
+
+	add word [pipe_a], 8
+	pop si
+	clc
+	ret
+
+.wrap:
+	mov word [pipe_a], 0
+	pop si
+	clc
+	ret
+
+draw_pipes:
+	push word [PIPE_1 + 0]
+	push 0
+	push word [PIPE_1 + 2]
+	call draw_pipe
+
+	push word [PIPE_1 + 0]
+	push word [PIPE_1 + 4]
+	push word [PIPE_1 + 6]
+	call draw_pipe
+
+	push word [PIPE_2 + 0]
+	push 0
+	push word [PIPE_2 + 2]
+	call draw_pipe
+
+	push word [PIPE_2 + 0]
+	push word [PIPE_2 + 4]
+	push word [PIPE_2 + 6]
+	call draw_pipe
+
+	push word [PIPE_3 + 0]
+	push 0
+	push word [PIPE_3 + 2]
+	call draw_pipe
+
+	push word [PIPE_3 + 0]
+	push word [PIPE_3 + 4]
+	push word [PIPE_3 + 6]
+	call draw_pipe
+
+	ret
+
+draw_pipe:
+	push bp
+	mov bp, sp
+	
+	pusha
+
+	mov ax, word [bp+4]
+	mov bx, 2
+	xor dx, dx
+	div bx
+
+	mov cx, ax
+	mov ax, word [bp+6]
+	xor dx, dx
+
+.body:
+	push pipe
+	push 32			; w
+	push 2			; h
+	push 0			; sx
+	push 0			; sy
+	push 32			; sw
+	push 2			; sh
+	push word [bp+8]; dx
+	push ax			; dy
+	push 0			; trasnsparent color
+	push 0
+	call blit
+
+	add ax, 2
+	dec cx
+	jnz .body
+
+	mov ax, [bp+6]
+	cmp ax, 0
+	jne .top
+
+	mov ax, [bp+4]
+	sub ax, 4
+
+.top:
+	mov dx, [bp+8]
+	sub dx, 2
+
+	push pipe_top
+	push 36			; w
+	push 4			; h
+	
+	push 0			; sx
+	push 0			; sy
+	
+	push 36			; sw
+	push 4			; sh
+
+	push dx			; dx
+	push ax			; dy
+	
+	push 0			; trasnsparent color
+	push 0
+	call blit
+
+	popa
+	pop bp
+	ret 6			; 3 param * 2 bytes
+
+randomize_pipes:
+	push si
+	mov si, pipes
+
+.loop:
+	push si
+	call randomize_pipe
+
+	add si, 8
+	cmp si, pipes + 24
+	jl .loop
+
+	pop si
+	ret
+
+randomize_pipe_1:
+	push PIPE_1
+	call randomize_pipe
+	ret
+
+randomize_pipe_2:
+	push PIPE_2
+	call randomize_pipe
+	ret
+
+randomize_pipe_3:
+	push PIPE_3
+	call randomize_pipe
+	ret
+
+randomize_pipe_height:
+	call random
+	
+	cmp ax, 42
+	jge randomize_pipe_height
+
+	cmp ax, 18
+	jle randomize_pipe_height
+
+	mov cx, ax
+	mov bx, 2
+	xor dx, dx
+	div bx
+
+	cmp dx, 0
+	jne randomize_pipe_height
+
+	mov ax, cx
+	ret
+
+randomize_pipe:
+	push bp
+	mov bp, sp
+
+	push si
+	pusha
+
+	call randomize_pipe_height
+
+	mov bx, 78
+	sub bx, ax
+
+	mov si, [bp + 4]
+
+	mov word [si + 2], bx
+
+	call randomize_pipe_height
+
+	mov bx, 78
+	sub bx, ax
+
+	mov word [si + 6], bx
+
+	add ax, 78
+	mov word [si + 4], ax
+
+	popa
+	pop si
+	pop bp
+	ret 2 ; 1 params * 2 bytes
+
+random_pipe_position:
+	call random
+	
+	cmp ax, 100
+	jle random_pipe_position
+
+	cmp ax, 220
+	jge random_pipe_position
+	
+	ret
+
+reset_pipes:
+	mov word [PIPE_1], 120
+	mov word [PIPE_2], 260
+	mov word [PIPE_3], 400
+	mov word [pipe_a], 0
+	ret
+
+pipes : dw 120, 32, 64, 32, 260, 78, 78, 78, 400, 78, 78, 78 ; offset = 4
+pipe_a: dw 0 ; active pipe offset [0, 8, 16]
+add_score:
+	add word [score], 50
+	ret
+
+new_highscore:
+	push ax
+
+	mov ax, word [score]
+	cmp ax, word [highscore]
+	jle .reset
+
+	mov word [highscore], ax
+
+.reset:
+	mov word [score], 0
+	pop ax
+	ret
+
+draw_score:
+	push word [score]
+	call draw_number
+	ret
+
+draw_highscore:
+	push word [highscore]
+	call draw_number
+	ret
+
+draw_number:
+	push bp
+	mov bp, sp
+
+	pusha
+
+	mov ax, [bp+4]
+	mov bx, 10
+	xor cx, cx
+
+.loop:
+	xor dx, dx
+	div bx
+	inc cx
+
+	push dx
+	test ax, ax
+	jnz .loop
+
+	mov ax, 8
+	mul cx
+
+	mov bx, VIDMEW
+	sub bx, ax
+
+	mov ax, bx
+	xor dx, dx
+	mov bx, 2
+	div bx
+
+	mov bx, ax
+
+.blit:
+	pop dx		; pop out the next digit (in reverse order)
+	mov ax, 8
+	mul dx
+
+	push font
+	push 80		; pw
+	push 8		; ph
+	push ax		; sx
+	push 0		; sy
+	push 8		; sw
+	push 8		; sh
+	push bx		; dx
+	push 10		; dy
+	push 0			; transparent color
+	push 0			; tint color
+	call blit_fast
+
+	add bx, 8	; next digit (8 pixels)
+	dec cx
+	jnz .blit
+
+	popa
+	pop bp
+	ret 2		; 1 params * 2 bytes
+
+score:		dw 0	; current score
+highscore:	dw 0	; high score
+main:
+	call set_vga_mode
+	call randomize
+
+.start:
+	call new_highscore
+	call center_bird
+
+.intro:
+	call animate_bird
+
+	call draw_background
+	call draw_ground
+	call draw_flats
+	call draw_bushes
+	call draw_clouds
+	call draw_bird
+	call draw_highscore
+
+	call vsync
+	call flpscr
+
+	mov dx, 2
+	call sleep
+	
+	call kbhit
+
+	test al, al
+	jz .intro
+
+	cmp al, 27					; escape
+	je .reboot					; reboot :P
+
+	cmp al, 8					; backspace
+	je .rndbg					; randomize background
+
+	cmp al, 9					; tab
+	je .rndbrd					; randomize bird
+
+	call reset_pipes
+	call randomize_pipes
+
+	call reset_bird
+
+	mov ax, 4242
+	mov dx, 1
+	call beep
+
+.loop:
+	call draw
+
+	call update_bird
+	jc .end
+
+	call update_pipes
+	call collide_pipe
+	jc .end
+
+	call vsync
+	call flpscr
+
+	mov dx, 1
+	call sleep
+
+	jmp .loop
+	ret
+
+.end:
+	call draw
+
+	call vsync
+	call flpscr
+
+	mov ax, 6969
+	mov dx, 1
+	call beep
+
+	mov dx, 15
+	call sleep
+
+	jmp .start
+	ret
+
+.rndbg:
+	call randomize_backgroundcolor
+	jmp .intro
+	ret
+
+.rndbrd:
+	call randomize_birdcolor
+	jmp .intro
+	ret
+
+.reboot:
+%ifdef COM
+	call set_text_mode
+	int 20h						; exit this bad-boy :P
+%else
+	call reboot					; reboot this bad-boy :P
+	ret
+%endif
+
+draw:
+	call draw_background
+	call draw_flats
+	call draw_bushes
+	call draw_clouds
+	call draw_pipes
+	call draw_bird
+	call draw_score
+	ret
+
+%include 'game/background.asm'
+%include 'game/score.asm'
+%include 'game/ground.asm'
+%include 'game/flats.asm'
+%include 'game/bushes.asm'
+%include 'game/clouds.asm'
+%include 'game/pipes.asm'
+%include 'game/bird.asm'
+%include 'game/data.asm'
+%define VIDMEW 320		  ; video memory width
+%define VIDMEH 200		  ; video memory height
+%define VIDMES 64000	  ; video memory size
+%define VIDMEM IMAGE_SIZE ; back buffer video memory
+%define VIDMED 0xA000	  ; system video memory
+
+; ==========================================
+; PROTOTYPE	: void set_vga_mode(void)
+; INPUT		: n/a
+; RETURN	: n/a
+; ==========================================
+set_vga_mode:
+	pusha
+
+	mov ax, 0x13	; 320x200 @ 256 color mode
+	int 10h			; call BIOS interrupt
+
+	popa
+	ret
+
+; ==========================================
+; PROTOTYPE	: void vsync(void)
+; INPUT		: n/a
+; RETURN	: n/a
+; ==========================================
+vsync:
+	pusha
+	mov dx, 0x3DA	; port 0x3DA
+
+.l1:
+	in al, dx		; port
+	test al, 8		; test bit 4
+	jnz .l1			; retrace in progress?
+
+.l2:
+	in al, dx		; port
+	test al, 8		; test bit 4
+	jz .l2			; new retrace?
+	
+	popa
+	ret
+
+; =====================================================
+; PROTOTYPE	: void blit( unsigned char *pixels,
+;						 short  w, short  h,
+;						 short sx, short sy,
+;						 short sw, short sh, 
+;						 short dx, short dy, 
+;						 unsigned char color,
+;						 unsigned char tint )
+; INPUT		: n/a
+; RETURN	: n/a
+; =====================================================
+blit:
+	push bp
+	mov bp, sp			; top of the stack
+	
+	pusha
+
+	cmp word [bp+14], 0 ; sw is 0?
+	je .end
+
+	cmp word [bp+12], 0 ; sh is 0?
+	je .end
+
+	cmp word [bp+10], VIDMEW ; dx out of bounds on right
+	jge .end				 ; full clip
+
+	cmp word [bp+8], VIDMEH ; dy out of bounds on bottom
+	jge .end				; full clip
+
+	mov ax, [bp+14]		 ;  sw (width)
+	neg ax				 ; -sw
+
+	cmp word [bp+10], ax ; dx out of bounds on left
+	jle .end			 ; full clip
+
+	mov bx, [bp+12]		 ; sh (height)
+	neg bx				 ; -sh
+
+	cmp word [bp+8], bx  ; dy out of bounds on top
+	jle .end			 ; full clip
+
+	neg ax				 ; revert sw (width)
+	add ax, [bp+10]		 ; add dx
+
+	neg bx				 ; revert sh (height)
+	add bx, [bp+8]		 ; add dy
+
+	cmp ax, VIDMEW		 ; dx partially out of bounds on right
+	jge .clipr			 ; try partial right clip
+
+	cmp bx, VIDMEH		 ; dy partially ouf of bounds on bottom
+	jge .clipb			 ; try partial bottom clip
+
+	cmp word [bp+10], 0	; dx partially out of bounds on left
+	jge .clipt			; quick exit if it's not the case
+
+.clipl: ; clip left
+	mov ax, [bp+10]		; use the dx as an offset
+
+	sub [bp+18], ax	; offset sx to the right
+	add [bp+14], ax	; offset sw to the left
+	mov word [bp+10], 0	; reset dx
+
+	jmp .clipt				; go and blit the visible part
+
+.clipr: ; clip right
+	sub ax, VIDMEW			; figure out how much is left to display?
+	sub word [bp+14], ax	; and adjust sw (width)
+
+	cmp bx, VIDMEH			; dy partially ouf of bounds on bottom?
+	jl .noclip				; quick exit if it's not the case
+
+.clipb: ; clip bottom
+	sub bx, VIDMEH			; figure out how much is left to display?
+	sub word [bp+12], bx	; and adjust sh (height)
+
+	jmp .noclip				; go and blit the visible part
+
+.clipt: ; clip top
+	cmp word [bp+8], 0	; dy partially out of bounds on the top
+	jge .noclip			; quick exit if it's not the case
+
+	mov bx, [bp+8]		; use the dy as an offset
+
+	sub [bp+16], bx	; offset sy to the top
+	add [bp+12], bx	; offset sh to the bottom
+
+	mov word [bp+8], 0	; reset dy
+
+.noclip:
+	mov ax, VIDMEM		; pointer to screen buffer
+	mov es, ax			; 
+
+	mov ax, VIDMEW		; screen width
+	mov dx, [bp+8]		; dy
+	mul dx
+
+	mov di, ax			; dy * screen width
+	add di, [bp+10]		; dx
+
+	mov dx, VIDMEW		; screen width
+	sub dx, [bp+14]		; sw
+
+	mov [.dxoffset], dx ; destination offset
+
+	mov dx, [bp+22]		; w
+	sub dx, [bp+14]		; sw
+
+	mov [.sxoffset], dx ; source offset
+
+	mov ax, [bp+22]		; w
+	mov dx, [bp+16]		; sy
+	mul dx
+	add ax, [bp+18]		; sx + sy * w
+
+	mov si, [bp+24]		; pointer to pixel buffer
+	add si, ax			; sx + sy * w
+
+	xor ax, ax			; clear AX
+	xor bx, bx			; clear BX
+	xor cx, cx			; clear CX
+	xor dx, dx			; clear DX
+
+.loop:
+	lodsb					; load [DS:SI] into AL
+
+	cmp al, byte [bp+6]		; compare AL to transparent color
+	je .transparent			; skip this pixel if transparent
+
+	add al, byte [bp+4]		; add tint color
+
+	stosb					; store AL into [ES:DI]
+	jmp .next				; next pixel
+
+.transparent:
+	inc di					; increment destination offset
+
+.next:
+	inc bx					; increment width
+	cmp bx, [bp+14]			; sw
+	jl .loop				; end of row?
+
+	xor bx, bx				; reset width
+	add di, [.dxoffset]		; increment destination offset
+	add si, [.sxoffset]		; increment source offset
+
+	inc cx					; increment height
+	cmp cx, [bp+12]			; sh 
+	jl .loop				; next row
+
+.end:
+	popa
+	pop bp
+	ret 22					; 11 params * 2 bytes
+
+	.sxoffset: dw 0			; source X offset
+	.dxoffset: dw 0			; destination X offset
+
+; =====================================================
+; PROTOTYPE	: void blit( unsigned char *pixels,
+;						 short  w, short  h,
+;						 short sx, short sy,
+;						 short sw, short sh, 
+;						 short dx, short dy, 
+;						 unsigned char color,
+;						 unsigned char tint )
+; INPUT		: n/a
+; RETURN	: n/a
+; =====================================================
+blit_fast:
+	push bp
+	mov bp, sp			; top of the stack
+	
+	pusha
+
+	mov ax, VIDMEM		; pointer to screen buffer
+	mov es, ax			; 
+
+	mov ax, VIDMEW		; screen width
+	mov dx, [bp+8]		; dy
+	mul dx
+
+	mov di, ax			; dy * screen width
+	add di, [bp+10]		; dx
+
+	mov dx, VIDMEW		; screen width
+	sub dx, [bp+14]		; sw
+
+	mov [.dxoffset], dx ; destination offset
+
+	mov dx, [bp+22]		; w
+	sub dx, [bp+14]		; sw
+
+	mov [.sxoffset], dx ; source offset
+
+	mov ax, [bp+22]		; w
+	mov dx, [bp+16]		; sy
+	mul dx
+	add ax, [bp+18]		; sx + sy * w
+
+	mov si, [bp+24]		; pointer to pixel buffer
+	add si, ax			; sx + sy * w
+
+	xor ax, ax			; clear AX
+	xor bx, bx			; clear BX
+	xor cx, cx			; clear CX
+	xor dx, dx			; clear DX
+
+.loop:
+	lodsb					; load [DS:SI] into AL
+
+	cmp al, byte [bp+6]		; compare AL to transparent color
+	je .transparent			; skip this pixel if transparent
+
+	add al, byte [bp+4]		; add tint color
+
+	stosb					; store AL into [ES:DI]
+	jmp .next				; next pixel
+
+.transparent:
+	inc di					; increment destination offset
+
+.next:
+	inc bx					; increment width
+	cmp bx, [bp+14]			; sw
+	jl .loop				; end of row?
+
+	xor bx, bx				; reset width
+	add di, [.dxoffset]		; increment destination offset
+	add si, [.sxoffset]		; increment source offset
+
+	inc cx					; increment height
+	cmp cx, [bp+12]			; sh 
+	jl .loop				; next row
+
+.end:
+	popa
+	pop bp
+	ret 22					; 11 params * 2 bytes
+
+	.sxoffset: dw 0			; source X offset
+	.dxoffset: dw 0			; destination X offset
+
+; ==========================================
+; PROTOTYPE	: void blit_rect(short x, short y
+;							 short w, short h,
+;							 unsigned char color)
+; INPUT		: n/a
+; RETURN	: n/a
+; ==========================================
+blit_rect:
+	push bp
+	mov bp, sp			; top of the stack
+
+	pusha
+
+	mov ax, VIDMEM		; pointer to screen buffer
+	mov es, ax			; 
+
+	mov ax, VIDMEW		; screen width
+	mov dx, [bp+10]		; y
+	mul dx
+
+	mov di, ax			; y * screen width
+	add di, [bp+12]		; x
+
+	mov dx, VIDMEW		; screen width
+	sub dx, [bp+8]		; width
+
+	mov bx, [bp+6]		; height
+
+	xor ah, ah
+	mov al, byte [bp+4] ; color
+
+.loop:
+	mov cx, [bp+8]		; width
+	rep stosb			; draw one row
+
+	add di, dx			; next row
+
+	dec bx				; increase row
+	jnz .loop			; continue unless index 0
+
+.end:
+	popa
+	pop bp
+	ret	10				; 5 params * 2 bytes
+
+%if 0
+; ==========================================
+; PROTOTYPE	: void clrscr(void)
+; INPUT		: clear color in AL
+; RETURN	: n/a
+; ==========================================
+clrscr:
+	push ax
+	push cx
+
+	mov cx, VIDMEM		; pointer to screen buffer
+	mov es, cx			;
+	xor di, di			; index 0
+	
+	mov ah, al
+
+	mov cx, VIDMES / 2	; 64000 / 2
+	rep stosw			; store AX (2 bytes) in [ES:DI]
+
+	pop cx
+	pop ax
+	ret
+%endif
+
+; ==========================================
+; PROTOTYPE	: void flpscr(void)
+; INPUT		: n/a
+; RETURN	: n/a
+; ==========================================
+flpscr:
+	push ds
+	push cx
+
+	mov cx, VIDMED
+	mov es, cx
+	xor di, di
+
+	mov cx, VIDMEM
+	mov ds, cx
+	xor si, si
+
+	mov cx, VIDMES / 4 ; 64000 / 4
+
+	rep movsd  ; copy 4 bytes from [DS:SI] into [ES:DI]
+
+	pop cx
+	pop ds
+	ret
+
+%if 0
+; ==========================================
+; PROTOTYPE	: void blit_color_palette(void)
+; INPUT		: n/a
+; RETURN	: n/a
+; ==========================================
+blit_color_palette:
+	pusha
+
+	mov ax, VIDMEM	; pointer to screen buffer
+	mov es, ax		; 
+	xor di, di		; index 0
+
+	xor ax, ax
+	mov al, 40		; start with color 40 to avoid jmp
+	xor bx, bx
+
+.loopy1:
+	sub al, 40		; substract 40 from the color (see above)
+
+.loopy2:
+	xor dx, dx		; initialize row to index 0
+
+.loopx:
+	mov cx, 8		; initialize counter with 8
+	rep stosb		; draw 8 pixels with the current color and increment DI
+	inc al			; increment color
+
+	inc dx			; increment column index
+	cmp dx, 40		; start again unless end of row (VIDMEW / 8 = 40)
+	jl .loopx		;
+
+	inc ah			; increment height
+	cmp ah, 8		; if we didn't draw 8 pixels, loop again
+	jl .loopy1		;
+
+	inc bx			; increment row index
+	cmp bx, 25		; if we reached rows 25 then we are done
+	je .end			;
+
+	xor ah, ah		; reset height
+	jmp .loopy2		; start a new row
+
+.end:
+	popa
+	ret
+
+; ====================================================
+; PROTOTYPE	: void intersect(short r1[4], short r2[4])
+; INPUT		: two vectors (x, y, w, z)
+; RETURN	: carry flag set if intersect
+; ====================================================
+intersect:
+	push bp
+	mov bp, sp
+
+	pusha
+
+	mov si, [bp+4] ; r1
+	mov di, [bp+6] ; r2
+
+	mov ax, [di+0] ; x
+	add ax, [di+4] ; w
+
+	cmp word [si+0], ax ; x1 > x2 + w2
+	jg .fail
+
+	mov ax, [di+2] ; y
+	add ax, [di+6] ; h
+
+	cmp word [si+2], ax ; y1 > y2 + h2
+	jg .fail
+
+	mov ax, [si+0] ; x
+	add ax, [si+4] ; w
+
+	cmp ax, word [di+0] ; x1 + w1 < x2
+	jl .fail
+
+	mov ax, [si+2] ; y
+	add ax, [si+6] ; h
+
+	cmp ax, word [di+2] ; y1 + h1 < y2
+	jl .fail
+
+	stc
+	popa
+	pop bp
+	ret 4 ; 2 params * 2 bytes
+
+.fail:
+	clc
+	popa
+	pop bp
+	ret 4 ; 2 params * 2 bytes
+%endif
+; ==================================================
+; PROTOTYPE	: void beep(short note, short delay)
+; INPUT		: note in AX, delay in DX
+; RETURN	: n/a
+; ==================================================
+beep:
+	push bx
+	mov bx, ax
+
+	mov al, 182
+	out 43h, al
+
+	mov ax, bx
+	out 42h, al
+	mov al, ah
+	out 42h, al
+
+	in al, 61h
+	or al, 03h
+	out 61h, al
+
+	call sleep
+
+	in al, 61h
+	and al, 0FCh
+	out 61h, al
+
+	pop bx
+	ret
+; =====================================
+; PROTOTYPE	: void set_text_mode(void)
+; INPUT		: n/a
+; RETURN	: n/a
+; =====================================
+set_text_mode:
+	pusha
+
+	mov ax, 0x3		; 80x25 @ 16 color mode
+	int 10h			; call BIOS interrupt
+
+	popa
+	ret	
+
+; ==============================
+; PROTOTYPE	: void reboot(void)
+; INPUT		: n/a
+; RETURN	: n/a
+; ==============================
+reboot:
+	mov ax, 0
+	int 19h
+	ret
+
+; ==================================
+; PROTOTYPE	: short getch(void)
+; INPUT		: n/a
+; RETURN	: returns key hit in AX
+; ==================================
+getch:
+	pusha
+
+	mov ax, 0		; get key hit function (will block)
+	int 16h			; call BIOS interrupt
+
+	mov [.key], ax
+
+	popa
+	
+	mov ax, [.key]
+	ret	
+
+	.key: dw 0
+
+; ==================================
+; PROTOTYPE	: short kbhit(void)
+; INPUT		: n/a
+; RETURN	: returns key hit in AX
+; ==================================
+kbhit:
+	pusha
+
+	mov al, 0			; check for any keys hit
+	mov ah, 1			; but do not block (async)
+	int 16h				; call BIOS interrupt
+	jz .end				; if no keys hit jump to end
+
+	mov ax, 0			; get key hit function
+	int 16h				; call BIOS interrupt
+
+	mov [.key], ax
+
+	popa
+	
+	mov ax, [.key]
+	ret		
+
+.end:
+	popa
+
+	mov ax, 0			; set AX to 0 if no keys hit
+	ret
+
+	.key: dw 0
+
+; ===========================================
+; PROTOTYPE	: void puts(char *s)
+; INPUT		: offset/pointer to string in SI
+; RETURN	: n/a
+; ===========================================
+puts:
+	pusha
+
+.loop:
+	lodsb		; move byte [DS:SI] into AL
+
+	cmp al, 0	; 0 == end of string ?
+	je .end
+
+	mov ah, 0Eh ; display character function
+	int 10h		; call BIOS interrupt
+
+	jmp .loop	; next character
+
+.end:
+	popa
+	ret
+
+; =======================================
+; PROTOTYPE	: void putc(char ch)
+; INPUT		: character to display in AL
+; RETURN	: n/a
+; =======================================
+putc:
+	pusha
+
+	mov ah, 0Eh ; display character function
+	int 10h		; call BIOS interrupt
+
+	popa
+	ret
+; ==================================================
+; PROTOTYPE	: void ticks(void)
+; INPUT		: n/a
+; RETURN	: tick count in DX (resolution =~ 55ms)
+; ==================================================
+ticks:
+	push ax
+
+	mov ax, 0			; get tick count function 
+	int 1Ah				; call BIOS interrupt
+
+	mov [.ticks], dx
+
+	pop ax
+
+	mov dx, [.ticks]
+	ret
+
+	.ticks dw 0
+
+; ============================================================
+; PROTOTYPE	: void sleep(short ms)
+; INPUT		: amount of ms to sleep in DX (resolution =~ 55ms)
+; RETURN	: n/a
+; ============================================================
+sleep:
+	pusha
+
+	mov ax, 0	; get tick count function
+	mov bx, dx	; save ms
+
+	int 1Ah		; call BIOS interrupt
+	add bx, dx	; ms + ticks
+
+.wait:
+	int 1Ah		; call BIOS interrupt
+
+	cmp dx, bx
+	jne .wait	; loop until we waited for ms amount
+
+	popa
+	ret
+%define MAX_SHORT 65535
+; =================================
+; PROTOTYPE	: void randomize(void)
+; INPUT		: n/a
+; RETURN	: n/a
+; =================================
+randomize:
+	pusha
+
+	call ticks
+	mov [seed], dx ; tickcount as seed
+
+	popa
+	ret
+
+; ================================
+; PROTOTYPE	: void random(void)
+; INPUT		: n/a
+; RETURN	: random number in AX
+; ================================
+random:
+	pusha
+	
+	mov ax, [seed]
+	mov dx, 33333
+	mul dx				; multiply SEED with AX
+
+	inc ax				; increment seed
+	mov [seed], ax		; use AX as new seed
+	mov [.rnd], dx		; save random value
+
+	popa
+
+	mov ax, [.rnd]		; return random value in AX
+	ret
+
+	.rnd dw 0
+
+seed: dw 13666 ; default seed

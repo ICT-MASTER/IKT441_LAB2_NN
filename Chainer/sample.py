@@ -22,7 +22,7 @@ RNN_SAMPLE = int(os.environ.get("RNN_SAMPLE"))
 RNN_PRIMETEXT = os.environ.get("RNN_PRIMETEXT")
 RNN_LENGTH = int(os.environ.get("RNN_LENGTH"))
 RNN_GPU = int(os.environ.get("RNN_GPU", 0))
-
+RNN_TRAIN_MODE = str(os.environ.get("RNN_TRAIN_MODE"))
 
 
 
@@ -71,6 +71,9 @@ def run():
     if len(RNN_PRIMETEXT) > 0:
         for i in unicode(RNN_PRIMETEXT, 'utf-8'):
             sys.stdout.write(i)
+            if RNN_TRAIN_MODE == "Word":
+                sys.stdout.write(" ")
+
             prev_char = np.ones((1,), dtype=np.int32) * vocab[i]
             if RNN_GPU >= 0:
                 prev_char = cuda.to_gpu(prev_char)
@@ -87,6 +90,9 @@ def run():
         else:
             index = np.argmax(cuda.to_cpu(prob.data))
         sys.stdout.write(ivocab[index])
+
+        if RNN_TRAIN_MODE == "Word":
+            sys.stdout.write(" ")
 
         prev_char = np.array([index], dtype=np.int32)
         if RNN_GPU >= 0:

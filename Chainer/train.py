@@ -11,6 +11,9 @@ from chainer import cuda, Variable, FunctionSet, optimizers
 import chainer.functions as F
 from CharRNN import CharRNN, make_initial_state
 
+''' -------------------------------------------------- '''
+#   Environment variables gathered for raining instance #
+''' -------------------------------------------------- '''
 RNN_DATA_DIR = os.environ.get("RNN_DATA_DIR")
 RNN_TRAINING_FILE = os.environ.get("RNN_TRAINING_FILE")
 RNN_CHECKPOINT_DIR = os.environ.get("RNN_CHECKPOINT_DIR")
@@ -26,41 +29,52 @@ RNN_BATCHSIZE = int(os.environ.get("RNN_BATCHSIZE"))
 RNN_EPOCHS = int(os.environ.get("RNN_EPOCHS"))
 RNN_GRAD_CLIP = int(os.environ.get("RNN_GRAD_CLIP"))
 RNN_INIT_FROM = str(os.environ.get("RNN_INIT_FROM"))
-
-
-
-# Determine paths
+RNN_TRAIN_MODE = str(os.environ.get("RNN_TRAIN_MODE"))
+''' -------------------------------------------------- '''
+#   Generate paths to model, checkpoint and vocab #
+''' -------------------------------------------------- '''
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__)) # Chainer path
-MODEL_PATH = CURRENT_PATH + "/Models/" + os.path.splitext(os.path.basename(RNN_TRAINING_FILE))[0] + "/" # Model path
+MODEL_PATH = CURRENT_PATH + "/Models/" + os.path.splitext(os.path.basename(RNN_TRAINING_FILE))[0] + "-" + RNN_TRAIN_MODE + "/"  # Model path
 CHECKPOINT_PATH = MODEL_PATH + "checkpoints/"
 VOCAB_PATH = MODEL_PATH + "vocabulary.bin"
 
-
-print("--- Path Summary ---")
-print("Chainer Path: " + CURRENT_PATH)
-print("Model Path: " + MODEL_PATH)
-print("Checkpoint Path: " + CHECKPOINT_PATH)
-print("--------------------")
-
-# Create directories
+''' -------------------------------------------------- '''
+#              Create missing directories              #
+''' -------------------------------------------------- '''
 if not os.path.exists(MODEL_PATH):
     os.mkdir(MODEL_PATH)
 if not os.path.exists(CHECKPOINT_PATH):
     os.mkdir(CHECKPOINT_PATH)
 
 
+
+
 # Load input data
-def load_data():
+def load_data(mode="Word"):
+
+    words = []
     vocab = {}
-    words = codecs.open(RNN_TRAINING_FILE, 'rb', 'utf-8', errors='ignore').read()
-    words = list(words)
+
+
+    file = codecs.open(RNN_TRAINING_FILE, 'rb', 'utf-8', errors='ignore').read()
+
+    for word in file.split(" "):
+
+        if mode is "Char":
+            for char in word:
+                words.append(char)
+        else:
+            words.append(word)
+
     dataset = np.ndarray((len(words),), dtype=np.int32)
     for i, word in enumerate(words):
         if word not in vocab:
             vocab[word] = len(vocab)
         dataset[i] = vocab[word]
+
     print 'corpus length:', len(words)
     print 'vocab size:', len(vocab)
+
     return dataset, words, vocab
 
 
@@ -74,7 +88,8 @@ def do_checkpoint(model, epoch):
 
 
 
-train_data, words, vocab = load_data()
+train_data, words, vocab = load_data(RNN_TRAIN_MODE)
+
 pickle.dump(vocab, open(VOCAB_PATH, 'wb'))
 
 if len(RNN_INIT_FROM) > 0:
