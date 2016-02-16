@@ -18,8 +18,8 @@ except NameError:
 
 
 menu = {}
-menu['1']="Train Neural Network"
-menu['2']="Generate Sentences"
+menu['1']="Train"
+menu['2']="Sample"
 menu['3']="Exit"
 while True:
     options = list(menu.keys())
