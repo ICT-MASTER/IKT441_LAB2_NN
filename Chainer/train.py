@@ -58,12 +58,18 @@ def load_data(mode="Word"):
 
     file = codecs.open(RNN_TRAINING_FILE, 'rb', 'utf-8', errors='ignore').read()
 
+    if mode == "Char":
+        print("Character Mode!")
+    else:
+        print("Word Mode!")
+
     for word in file.split(" "):
 
-        if mode is "Char":
+        if mode == "Char":
             for char in word:
                 words.append(char)
         else:
+
             words.append(word)
 
     dataset = np.ndarray((len(words),), dtype=np.int32)
@@ -87,8 +93,8 @@ def do_checkpoint(model, epoch):
 
 
 
-
-train_data, words, vocab = load_data(RNN_TRAIN_MODE)
+print(RNN_TRAIN_MODE)
+train_data, words, vocab = load_data(mode=RNN_TRAIN_MODE)
 
 pickle.dump(vocab, open(VOCAB_PATH, 'wb'))
 
